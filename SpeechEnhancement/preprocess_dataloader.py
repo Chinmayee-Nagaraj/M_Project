@@ -35,12 +35,6 @@ The dataset directory should contain the following subfolders:
               ├── clean/
               └── noisy/
 
-Output shapes:
---------------
-- clean: Tensor of shape [batch_size, 1, 16000]  → clean 1s waveform
-- noisy: Tensor of shape [batch_size, 1, 16000]  → noisy 1s waveform
-- length: Original length of the file before padding/cropping
-
 """
 
 import os
@@ -165,6 +159,9 @@ class VCTK_DEMAND_Dataset(Dataset):
         noisy_wave = noisy_wave[:, start1s:start1s+ CROP_LEN]
 
         # Return tuple: (clean segment, noisy segment, original length)
+        # clean: Tensor of shape [batch_size, 1, 16000]  → clean 1s waveform
+        # noisy: Tensor of shape [batch_size, 1, 16000]  → noisy 1s waveform
+        # length: Original length of the file before padding/cropping
         return clean_wave, noisy_wave, length
       
 
