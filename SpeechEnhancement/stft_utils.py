@@ -105,4 +105,4 @@ class STFTProcessor:
        
         rec_noisy = self.istft_transform(noisy_spec, length=length).unsqueeze(1)
 
-        return rec_clean, rec_noisy
+        return rec_noisy
