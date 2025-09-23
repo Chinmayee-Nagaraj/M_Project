@@ -75,36 +75,34 @@ class STFTProcessor:
             noisy_wave (Tensor): [B, 1, T]
 
         Returns:
-            clean_spec: Complex STFT [B, F, T]
+            clean_mag: Magnitude [B, F, T]
             noisy_mag: Magnitude [B, F, T]
             noisy_phase: Phase [B, F, T]
         """
         clean_spec = self.stft_transform(clean_wave.squeeze(1))
         noisy_spec = self.stft_transform(noisy_wave.squeeze(1))
 
+        clean_mag = torch.abs(clean_spec)
         noisy_mag = torch.abs(noisy_spec)
         noisy_phase = torch.angle(noisy_spec)  # phase in radians
 
-        return clean_spec, noisy_mag, noisy_phase
+        return clean_mag, noisy_mag, noisy_phase
 
-    def istft(self, clean_spec, noisy_mag, noisy_phase, length=None):
+    def istft(self, noisy_mag, noisy_phase, length=None):
         """
         Reconstruct waveforms using ISTFT.
 
         Args:
-            clean_spec (Tensor): [B, F, T] complex clean STFT
             noisy_mag (Tensor): [B, F, T] magnitude of noisy
             noisy_phase (Tensor): [B, F, T] phase of noisy
             length (int, optional): Target waveform length
 
         Returns:
-            rec_clean: [B, 1, T] reconstructed clean waveform
             rec_noisy: [B, 1, T] reconstructed noisy waveform
         """
         # Reconstruct noisy complex STFT
         noisy_spec = noisy_mag * torch.exp(1j * noisy_phase)
-
-        rec_clean = self.istft_transform(clean_spec, length=length).unsqueeze(1)
+       
         rec_noisy = self.istft_transform(noisy_spec, length=length).unsqueeze(1)
 
         return rec_clean, rec_noisy
