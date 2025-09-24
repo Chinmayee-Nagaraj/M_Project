@@ -100,7 +100,6 @@ class DenseBlock(nn.Module):
     def forward(self, x):
         # x: (B,C,T,F)
         out1 = self.conv1(x)                      # (B,c,T,F)
-        print(out1.shape)
         cat1 = torch.cat([x, out1], dim=1)        # (B,1+c,T,F)
         cat1 = self.proj1(cat1)                   # → (B,2c,T,F)
         out2 = self.cn2(cat1)                     # (B,2c,T,F)
@@ -114,8 +113,6 @@ class DenseBlock(nn.Module):
         cat3 = torch.cat([out3, out4_in], dim=1)  # (B,3c+c,T,F)
         cat3 = self.proj3(cat3)                   # → (B,4c,T,F)
         out4 = self.cn4(cat3)                     # (B,4c,T,F)
-        print(out4.shape)
 
         out_final = self.conv4(out4)              # (B,c,T,F)
-        print(out_final.shape)
         return out_final
