@@ -76,37 +76,35 @@ class DilatedConv(nn.Module):
 
 
 class DenseBlock(nn.Module):
-    def __init__(self, c=64):
+    def __init__(self, in_channels, growth_rate=64):
         super().__init__()
-        self.c = c
-        self.out_channels = c
+        c = growth_rate
 
-        # convs (use same padding to keep T,F unchanged)
-        self.conv1 = DilatedConv(1, c, (2,3), dilation=1)
+        self.conv1 = DilatedConv(in_channels, c, (2,3), dilation=1)
+        self.proj1 = nn.Conv2d(in_channels + c, 2*c, kernel_size=1)
+
         self.conv2 = DilatedConv(2*c, c, (2,3), dilation=1)
-        self.conv3 = DilatedConv(3*c, c, (2,3), dilation=3)
-        self.conv4 = DilatedConv(4*c, c, (2,3), dilation=5)
-                
-        # projections so concat always matches ConvNet input channels
-        self.proj1 = nn.Conv2d(1+c, 2*c, kernel_size=1)
-        self.proj2 = nn.Conv2d(2*c+c, 3*c, kernel_size=1)
-        self.proj3 = nn.Conv2d(3*c+c, 4*c, kernel_size=1)
+        self.proj2 = nn.Conv2d(2*c + c, 3*c, kernel_size=1)
+        self.cn2   = ConvNet(2*c)
 
-        # convnets
-        self.cn2 = ConvNet(2*c)
-        self.cn3 = ConvNet(3*c)
-        self.cn4 = ConvNet(4*c)
+        self.conv3 = DilatedConv(3*c, c, (2,3), dilation=3)
+        self.proj3 = nn.Conv2d(3*c + c, 4*c, kernel_size=1)
+        self.cn3   = ConvNet(3*c)
+
+        self.conv4 = DilatedConv(4*c, c, (2,3), dilation=5)
+        self.cn4   = ConvNet(4*c)
+
+        # Final output is compressed to c
+        self.out_channels = c    
 
     def forward(self, x):
-        # x: (B,F,T)
-        x = x.unsqueeze(1)
-        x = x.permute(0, 1, 3, 2) 
-        # x: (B,1,T,F)
+        # x: (B,C,T,F)
         out1 = self.conv1(x)                      # (B,c,T,F)
+        print(out1.shape)
         cat1 = torch.cat([x, out1], dim=1)        # (B,1+c,T,F)
         cat1 = self.proj1(cat1)                   # → (B,2c,T,F)
         out2 = self.cn2(cat1)                     # (B,2c,T,F)
-
+        
         out3_in = self.conv2(out2)                # (B,c,T,F)
         cat2 = torch.cat([out2, out3_in], dim=1)  # (B,2c+c,T,F)
         cat2 = self.proj2(cat2)                   # → (B,3c,T,F)
@@ -116,8 +114,8 @@ class DenseBlock(nn.Module):
         cat3 = torch.cat([out3, out4_in], dim=1)  # (B,3c+c,T,F)
         cat3 = self.proj3(cat3)                   # → (B,4c,T,F)
         out4 = self.cn4(cat3)                     # (B,4c,T,F)
+        print(out4.shape)
 
         out_final = self.conv4(out4)              # (B,c,T,F)
+        print(out_final.shape)
         return out_final
-
-
