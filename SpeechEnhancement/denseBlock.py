@@ -3,6 +3,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
+
+
 class ConvNet(nn.Module):
     def __init__(self, channels, kernel_size=(3,3), dilation=1):
         super().__init__()
