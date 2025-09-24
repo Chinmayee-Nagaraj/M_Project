@@ -79,6 +79,7 @@ class DenseBlock(nn.Module):
     def __init__(self, c=64):
         super().__init__()
         self.c = c
+        self.out_channels = c
 
         # convs (use same padding to keep T,F unchanged)
         self.conv1 = DilatedConv(1, c, (2,3), dilation=1)
