@@ -37,6 +37,8 @@ N_FFT = 512
 WIN_LENGTH = 512
 HOP_LENGTH = 256
 
+T_length = 16000
+
 class STFTProcessor:
     def __init__(self, n_fft=N_FFT, win_length=WIN_LENGTH, hop_length=HOP_LENGTH):
         """
@@ -75,9 +77,9 @@ class STFTProcessor:
             noisy_wave (Tensor): [B, 1, T]
 
         Returns:
-            clean_mag: Magnitude [B, F, T]
-            noisy_mag: Magnitude [B, F, T]
-            noisy_phase: Phase [B, F, T]
+            clean_mag: Magnitude [B, F, T_frames]
+            noisy_mag: Magnitude [B, F, T_frames]
+            noisy_phase: Phase [B, F, T_frames]
         """
         clean_spec = self.stft_transform(clean_wave.squeeze(1))
         noisy_spec = self.stft_transform(noisy_wave.squeeze(1))
@@ -88,13 +90,13 @@ class STFTProcessor:
 
         return clean_mag, noisy_mag, noisy_phase
 
-    def istft(self, noisy_mag, noisy_phase, length=None):
+    def istft(self, noisy_mag, noisy_phase, length=T_length):
         """
         Reconstruct waveforms using ISTFT.
 
         Args:
-            noisy_mag (Tensor): [B, F, T] magnitude of noisy
-            noisy_phase (Tensor): [B, F, T] phase of noisy
+            noisy_mag (Tensor): [B, F, T_frames] magnitude of noisy
+            noisy_phase (Tensor): [B, F, T_frames] phase of noisy
             length (int, optional): Target waveform length
 
         Returns:
