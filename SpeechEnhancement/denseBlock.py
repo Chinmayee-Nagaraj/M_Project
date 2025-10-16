@@ -1,6 +1,15 @@
+import warnings
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
+
+# Suppress just the UserWarning from F.conv2d about padding
+warnings.filterwarnings(
+    "ignore",
+    message="Using padding='same' with even kernel lengths and odd dilation"
+)
 
 
 class ConvNetBlock(nn.Module):
@@ -62,7 +71,6 @@ class ConvNetBlock(nn.Module):
         
         # Residual connection 1 (align channels)
         residual2 = x + residual1
-        
         x = self.dw_conv2(residual2)
         x = self.pw_conv3(x)
 
@@ -70,44 +78,73 @@ class ConvNetBlock(nn.Module):
         x = x + residual2
         return x
 
+
 class DenseBlock(nn.Module):
-    def __init__(self, in_channels, growth_rate=64):
+    """
+    Improved DenseBlock for spectrogram-like inputs.
+    
+    Structure:
+    - Alternating 2x3 convolution (dilated) and ConvNetBlock
+    - Dense concatenation of features (channel-wise)
+    - Progressive channel growth in concatenated inputs
+    - Output after final dilated conv has c channels
+    
+    Input shape : (B, C, T, F)
+    Output shape: (B, C, T, F)
+    """
+
+    def __init__(self, in_channels):
         super().__init__()
-        c = growth_rate
+        c = in_channels
 
-        self.conv1 = DilatedConv(in_channels, c, (2,3), dilation=1)
-        self.proj1 = nn.Conv2d(in_channels + c, 2*c, kernel_size=1)
+        # First 2x3 convolution
+        self.conv1 = nn.Conv2d(in_channels, c, kernel_size=(2, 3), padding='same')
 
-        self.conv2 = DilatedConv(2*c, c, (2,3), dilation=1)
-        self.proj2 = nn.Conv2d(2*c + c, 3*c, kernel_size=1)
-        self.cn2   = ConvNet(2*c)
+        # ConvNetBlock after first concat 
+        self.convnet1 = ConvNetBlock(in_channels=2*c)
 
-        self.conv3 = DilatedConv(3*c, c, (2,3), dilation=3)
-        self.proj3 = nn.Conv2d(3*c + c, 4*c, kernel_size=1)
-        self.cn3   = ConvNet(3*c)
+        # Dilated conv (dilation=1)
+        self.dilconv1 = nn.Conv2d(2*c, c, kernel_size=(2, 3), padding='same', dilation=1)
 
-        self.conv4 = DilatedConv(4*c, c, (2,3), dilation=5)
-        self.cn4   = ConvNet(4*c)
+        # ConvNetBlock after second concat
+        self.convnet2 = ConvNetBlock(in_channels=3*c)
 
-        # Final output is compressed to c
-        self.out_channels = c    
+        # Dilated conv (dilation=3)
+        self.dilconv2 = nn.Conv2d(3*c, c, kernel_size=(2, 3), padding='same', dilation=3)
+
+        # ConvNetBlock after third concat 
+        self.convnet3 = ConvNetBlock(in_channels=4*c)
+
+        # Final dilated conv (dilation=5)
+        self.dilconv3 = nn.Conv2d(4*c, c, kernel_size=(2, 3), padding='same', dilation=5)
+
+        self.out_channels = c
 
     def forward(self, x):
-        # x: (B,C,T,F)
-        out1 = self.conv1(x)                      # (B,c,T,F)
-        cat1 = torch.cat([x, out1], dim=1)        # (B,1+c,T,F)
-        cat1 = self.proj1(cat1)                   # → (B,2c,T,F)
-        out2 = self.cn2(cat1)                     # (B,2c,T,F)
+        """
+        Forward pass of DenseBlock.
+        Args:
+            x: Tensor of shape (B, C, T, F)
+        Returns:
+            Tensor of shape (B, C, T, F)
+        """
+
+        # First 2x3 convolution
+        out1 = self.conv1(x)                        # (B, C, T, F)
+        cat1 = torch.cat([x, out1], dim=1)          # (B, 2C, T, F)
+        out2 = self.convnet1(cat1)                  # (B, 2C, T, F)
         
-        out3_in = self.conv2(out2)                # (B,c,T,F)
-        cat2 = torch.cat([out2, out3_in], dim=1)  # (B,2c+c,T,F)
-        cat2 = self.proj2(cat2)                   # → (B,3c,T,F)
-        out3 = self.cn3(cat2)                     # (B,3c,T,F)
+        # Dilated conv1 (dilation=1) and concat
+        out3 = self.dilconv1(out2)                  # (B, C, T, F)
+        cat2 = torch.cat([out2, out3], dim=1)       # (B, 3C, T, F)
+        out3 = self.convnet2(cat2)                  # (B, 3C, T, F)
 
-        out4_in = self.conv3(out3)                # (B,c,T,F)
-        cat3 = torch.cat([out3, out4_in], dim=1)  # (B,3c+c,T,F)
-        cat3 = self.proj3(cat3)                   # → (B,4c,T,F)
-        out4 = self.cn4(cat3)                     # (B,4c,T,F)
+        # Dilated conv2 (dilation=3) and concat
+        out4 = self.dilconv2(out3)                  # (B, C, T, F)
+        cat3 = torch.cat([out3, out4], dim=1)       # (B, 4C, T, F)
+        out4 = self.convnet3(cat3)                  # (B, 4C, T, F)
 
-        out_final = self.conv4(out4)              # (B,c,T,F)
+        # Final dilated conv (dilation=5)
+        out_final = self.dilconv3(out4)             # (B, C, T, F)
         return out_final
+
