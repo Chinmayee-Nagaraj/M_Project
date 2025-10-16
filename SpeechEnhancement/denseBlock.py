@@ -11,15 +11,12 @@ class ConvNetBlock(nn.Module):
     - Gated Linear Unit (GLU) activation
     - Two residual connections for stability and feature reuse
     
-    Input shape : (B, C_in, T, F)
-    Output shape: (B, C_out, T, F)
+    Input and Output shape : (B, C_in, T, F)
     """
-    def __init__(self, in_channels, out_channels, hidden_channels, kernel_size=(3,3)):
+    def __init__(self, in_channels, kernel_size=(3,3)):
         """
         Args:
             in_channels (int): Number of input channels (C_in)
-            out_channels (int): Number of output channels (C_out)
-            hidden_channels (int): Hidden channel size for intermediate layers with range [C_out, C_in]
             kernel_size (tuple): Kernel size for depthwise convolutions
         """
         super().__init__()
@@ -28,20 +25,20 @@ class ConvNetBlock(nn.Module):
         self.layer_norm = nn.LayerNorm(in_channels)
 
         # Pointwise convolution   
-        self.pw_conv1 = nn.Conv2d(in_channels, hidden_channels, kernel_size=1)
+        self.pw_conv1 = nn.Conv2d(in_channels, in_channels, kernel_size=1)
 
         # Depthwise convolution 
-        self.dw_conv1 = nn.Conv2d(hidden_channels, hidden_channels, kernel_size=kernel_size, 
-                                  padding='same', groups=hidden_channels)
+        self.dw_conv1 = nn.Conv2d(in_channels, in_channels, kernel_size=kernel_size, 
+                                  padding='same', groups=in_channels)
         
         # GLU activation splits channel dim into 2 halves -> output = half channels
         self.glu = nn.GLU(dim=1)
 
-        self.pw_conv2 = nn.Conv2d(hidden_channels//2, hidden_channels, kernel_size=1)
+        self.pw_conv2 = nn.Conv2d(in_channels//2, in_channels, kernel_size=1)
         
-        self.dw_conv2 = nn.Conv2d(hidden_channels, hidden_channels, kernel_size=kernel_size, 
-                                  padding='same', groups=hidden_channels)
-        self.pw_conv3 = nn.Conv2d(hidden_channels, out_channels, kernel_size=1)
+        self.dw_conv2 = nn.Conv2d(in_channels, in_channels, kernel_size=kernel_size, 
+                                  padding='same', groups=in_channels)
+        self.pw_conv3 = nn.Conv2d(in_channels, in_channels, kernel_size=1)
 
     def forward(self, x):
         """
@@ -49,7 +46,7 @@ class ConvNetBlock(nn.Module):
         Args:
             x: Tensor of shape (B, C_in, T, F)
         Returns:
-            Tensor of shape (B, C_out, T, F)
+            Tensor of shape (B, C_in, T, F)
         """
         residual1 = x
         
@@ -64,38 +61,14 @@ class ConvNetBlock(nn.Module):
         x = self.pw_conv2(x)
         
         # Residual connection 1 (align channels)
-        residual2 = x + residual1[:, :x.shape[1], :, :]
+        residual2 = x + residual1
         
         x = self.dw_conv2(residual2)
         x = self.pw_conv3(x)
 
         # Residual connection 2 (align channels)
-        x = x + residual2[:, :x.shape[1], :, :]
+        x = x + residual2
         return x
-
-
-class DilatedConv(nn.Module):
-    def __init__(self, in_ch, out_ch, kernel=(2,3), dilation=1):
-        super().__init__()
-        kH, kW = kernel
-        d = dilation
-
-        # compute asymmetric padding
-        pad_h = d * (kH - 1)
-        pad_w = d * (kW - 1)
-
-        # split into top/bottom, left/right
-        pad_top = pad_h // 2
-        pad_bottom = pad_h - pad_top
-        pad_left = pad_w // 2
-        pad_right = pad_w - pad_left
-
-        self.pad = nn.ZeroPad2d((pad_left, pad_right, pad_top, pad_bottom))
-        self.conv = nn.Conv2d(in_ch, out_ch, kernel, padding=0, dilation=d)
-
-    def forward(self, x):
-        return self.conv(self.pad(x))
-
 
 class DenseBlock(nn.Module):
     def __init__(self, in_channels, growth_rate=64):
