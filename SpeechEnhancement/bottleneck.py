@@ -1,13 +1,11 @@
 import torch
 import torch.nn as nn
-from transformerEncoder import TransformerEncoder
+from transformer_encoder import TransformerEncoder
 
-# ------------------------------------------------------
-# Single Bottleneck Block = Time → Frequency → Global
-# ------------------------------------------------------
-class BottleneckBlock(nn.Module):
+
+class TFTblock(nn.Module):
     """
-    Bottleneck block with three transformer stages:
+    TFT block with three transformer stages:
       1. Time Transformer  : operates across temporal axis (per frequency bin).
       2. Frequency Transformer : operates across frequency axis (per time frame).
       3. Global Transformer: operates jointly across time–frequency tokens.
@@ -17,21 +15,21 @@ class BottleneckBlock(nn.Module):
         Input : (B, C, T, F)
         Output: (B, T*F, C) sequence for downstream modules
     """
-    def __init__(self, hidden_dim, num_heads, gn_groups=8):
+    def __init__(self, hidden_dim, num_heads, dropout=0.1, attention_dropout=0.1, gn_groups=8):
         super().__init__()
 
-        # TransformerEncoders (one per axis)
+        # TransformerEncoders 
         self.time_transformer = TransformerEncoder(
             num_heads=num_heads, hidden_dim=hidden_dim,
-            gru_dim=hidden_dim * 2, dropout=0.1, attention_dropout=0.1
+            gru_dim=hidden_dim * 4, dropout=dropout, attention_dropout=attention_dropout
         )
         self.freq_transformer = TransformerEncoder(
             num_heads=num_heads, hidden_dim=hidden_dim,
-            gru_dim=hidden_dim * 2, dropout=0.1, attention_dropout=0.1
+            gru_dim=hidden_dim * 4, dropout=dropout, attention_dropout=attention_dropout
         )
         self.global_transformer = TransformerEncoder(
             num_heads=num_heads, hidden_dim=hidden_dim,
-            gru_dim=hidden_dim * 2, dropout=0.1, attention_dropout=0.1
+            gru_dim=hidden_dim * 4, dropout=dropout, attention_dropout=attention_dropout
         )
 
         # Normalization layers (applied in channels-first format)
@@ -58,38 +56,33 @@ class BottleneckBlock(nn.Module):
         t_in = feat.permute(0, 2, 1, 3).reshape(B * F, T, C)   # (B*F, T, C)
         t_out = self.time_transformer(t_in)                    # (B*F, T, C)
         t_out = t_out.reshape(B, F, T, C).permute(0, 2, 1, 3)  # (B, T, F, C)
-        feat = self.norm_t((feat + t_out).permute(0, 3, 1, 2)) # residual + norm
+        feat = self.norm_t((feat + t_out).permute(0, 3, 1, 2)) # residual + norm  (B, C, T, F)
         feat = feat.permute(0, 2, 3, 1)                        # back to (B, T, F, C)
 
         # --- Frequency Transformer (over F, for each time step) ---
         f_in = feat.reshape(B * T, F, C)                       # (B*T, F, C)
         f_out = self.freq_transformer(f_in)                    # (B*T, F, C)
-        f_out = f_out.reshape(B, T, F, C)
-        feat = self.norm_f((feat + f_out).permute(0, 3, 1, 2))
-        feat = feat.permute(0, 2, 3, 1)
+        f_out = f_out.reshape(B, T, F, C)                      # (B, T, F, C)  
+        feat = self.norm_f((feat + f_out).permute(0, 3, 1, 2)) # residual + norm  (B, C, T, F) 
+        feat = feat.permute(0, 2, 3, 1)                        # back to (B, T, F, C)
 
         # --- Global Transformer (over flattened T*F tokens) ---
         g_in = feat.reshape(B, T * F, C)                       # (B, T*F, C)
         g_out = self.global_transformer(g_in)                  # (B, T*F, C)
-        g_out = g_out.reshape(B, T, F, C)
-        feat = self.norm_g((feat + g_out).permute(0, 3, 1, 2))
-        feat = feat.permute(0, 2, 3, 1)
+        g_out = g_out.reshape(B, T, F, C)                      # (B, T, F, C)  
+        feat = self.norm_g((feat + g_out).permute(0, 3, 1, 2)) # residual + norm  (B, C, T, F)
+        feat = feat.permute(0, 2, 3, 1)                        # back to (B, T, F, C)
 
         return feat.reshape(B, T * F, C)  # flatten tokens
 
 
-# ------------------------------------------------------
-# Multi-block Bottleneck Wrapper (TFT)
-# ------------------------------------------------------
-class TFT(nn.Module):
+class BottleNeckBlock(nn.Module):
     """
-    Time-Frequency Transformer (TFT).
-
     Pipeline:
       1. 1x1 Conv → project input channels → hidden_dim
-      2. N BottleneckBlocks stacked sequentially
+      2. N TFTs stacked sequentially
       3. 1x1 Conv → refine output
-      4. Optional grouped 1x1 Conv → project to out_channels
+      4. Grouped 1x1 Conv → project to out_channels
 
     Args:
         in_channels:  input channel dim
@@ -105,7 +98,7 @@ class TFT(nn.Module):
 
         self.input_proj = nn.Conv2d(in_channels, hidden_dim, kernel_size=1)
         self.bottlenecks = nn.ModuleList([
-            BottleneckBlock(hidden_dim, num_heads, gn_groups)
+            TFTblock(hidden_dim, num_heads, gn_groups)
             for _ in range(num_blocks)
         ])
         self.output_proj = nn.Conv2d(hidden_dim, hidden_dim, kernel_size=1)
