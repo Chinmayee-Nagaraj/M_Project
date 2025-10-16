@@ -39,15 +39,16 @@ The dataset directory should contain the following subfolders:
 
 import os
 import random
+from typing import Tuple, Optional
+
 import torch
 import torchaudio
 import torch.nn.functional as F
-from torch.utils.data import Dataset, DataLoader
+from torch import Tensor
+from torch.utils.data import Dataset, DataLoader, random_split
 
 
-# -----------------------------
 # Global constants and settings
-# -----------------------------
 TARGET_SR = 16000             # Target sampling rate (Hz) for all audio
 TARGET_LEN = TARGET_SR * 2    # 2 seconds segment length (32000 samples)
 CROP_LEN = TARGET_SR          # 1 second crop for training (16000 samples)
@@ -55,10 +56,7 @@ CROP_LEN = TARGET_SR          # 1 second crop for training (16000 samples)
 MAX_TRIES = 5                 # Number of retries to find an informative segment
 
 
-# -----------------------------
-# Utility functions
-# -----------------------------
-def compute_entropy(wav, num_bins=64):
+def compute_entropy(wav: Tensor, num_bins: int = 64) -> float:
     """
     Compute entropy of a waveform based on histogram of values.
 
@@ -75,16 +73,13 @@ def compute_entropy(wav, num_bins=64):
     return -torch.sum(p * torch.log2(p))
 
 
-def is_informative(wav, threshold=3.0):
+def is_informative(wav: Tensor, threshold: float = 3.0) -> bool:
     """
     Check if waveform has enough entropy (i.e., not silence).
     """
     return compute_entropy(wav) > threshold
 
 
-# -----------------------------
-# Dataset definition
-# -----------------------------
 class VCTK_DEMAND_Dataset(Dataset):
     """
     Custom PyTorch Dataset for VCTK + DEMAND dataset.
@@ -95,7 +90,7 @@ class VCTK_DEMAND_Dataset(Dataset):
       - Random 1s crop for training
     """
 
-    def __init__(self, data_dir):
+    def __init__(self, data_dir: str):
         """
         Args:
             data_dir (str): Directory containing 'clean' and 'noisy' subfolders.
@@ -107,10 +102,10 @@ class VCTK_DEMAND_Dataset(Dataset):
         self.clean_wav_names = [f for f in os.listdir(self.clean_dir) if f.endswith(".wav")]
         self.clean_wav_names = sorted(self.clean_wav_names)
 
-    def __len__(self):
+    def __len__(self) -> int:
         return len(self.clean_wav_names)
 
-    def __getitem__(self, idx):
+    def __getitem__(self, idx: int) -> Tuple[Tensor, Tensor, int]:
         # Get corresponding clean + noisy file paths
         clean_file = os.path.join(self.clean_dir, self.clean_wav_names[idx])
         noisy_file = os.path.join(self.noisy_dir, self.clean_wav_names[idx])
@@ -165,30 +160,41 @@ class VCTK_DEMAND_Dataset(Dataset):
         return clean_wave, noisy_wave, length
       
 
-# -----------------------------
-# Dataloader helper function
-# -----------------------------
-def load_data(ds_dir, batch_size=4, num_workers=2, pin_memory=True, shuffle=True):
+    def load_data(
+            ds_dir: str,
+            split: float = 0.9,
+            batch_size: int = 4,
+            num_workers: int = 2,
+            pin_memory: bool = True,
+            shuffle: bool = True
+            ) -> Tuple[DataLoader, DataLoader, DataLoader]:
     """
     Load VCTK-DEMAND dataset with train and test splits.
     
     Args:
         ds_dir (str): Root dataset directory containing 'trainset' and 'testset' subfolders.
+        split (float): Fraction of training data used for training (rest for validation).
         batch_size (int): Number of samples per batch.
         num_workers (int): Number of worker threads for DataLoader.
         pin_memory (bool): Speed up transfer to GPU.
         shuffle (bool): Shuffle training dataset.
 
     Returns:
-        train_loader, test_loader (torch.utils.data.DataLoader)
+        train_loader, val_loader, test_loader (torch.utils.data.DataLoader)
     """
     train_dir = os.path.join(ds_dir, "trainset")
     test_dir = os.path.join(ds_dir, "testset")
 
     # Create dataset objects
-    train_ds = VCTK_DEMAND_Dataset(train_dir)
+    full_train_ds = VCTK_DEMAND_Dataset(train_dir)
     test_ds = VCTK_DEMAND_Dataset(test_dir)
+   
+    # Split train/val
+    train_size: int = int(split * len(full_train_ds))
+    val_size: int = len(full_train_ds) - train_size
+    train_ds, val_ds = random_split(full_train_ds, [train_size, val_size])
 
+   
     # Create dataloaders
     train_loader = DataLoader(
         train_ds,
@@ -197,6 +203,15 @@ def load_data(ds_dir, batch_size=4, num_workers=2, pin_memory=True, shuffle=True
         num_workers=num_workers,
         pin_memory=pin_memory,
         drop_last=True
+    )
+   
+    val_loader = DataLoader(
+        val_ds, 
+        batch_size=batch_size, 
+        shuffle=False,
+        num_workers=num_workers,
+        pin_memory=pin_memory, 
+        drop_last=False
     )
 
     test_loader = DataLoader(
@@ -208,4 +223,4 @@ def load_data(ds_dir, batch_size=4, num_workers=2, pin_memory=True, shuffle=True
         drop_last=False
     )
 
-    return train_loader, test_loader
+    return train_loader, val_loader, test_loader
