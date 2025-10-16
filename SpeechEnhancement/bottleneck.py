@@ -1,133 +1,177 @@
 import torch
 import torch.nn as nn
+from torch import Tensor
+
 from transformer_encoder import TransformerEncoder
 
 
 class TFTblock(nn.Module):
     """
-    TFT block with three transformer stages:
-      1. Time Transformer  : operates across temporal axis (per frequency bin).
-      2. Frequency Transformer : operates across frequency axis (per time frame).
-      3. Global Transformer: operates jointly across time–frequency tokens.
+    Temporal-Frequency-Transformer (TFT) block.
 
-    Each stage uses residual connections + GroupNorm for stability.
-    Input / output format:
-        Input : (B, C, T, F)
-        Output: (B, T*F, C) sequence for downstream modules
+    Consists of three sequential transformer stages:
+        1. Time Transformer  : operates across temporal axis (per frequency bin).
+        2. Frequency Transformer : operates across frequency axis (per time frame).
+        3. Global Transformer: operates jointly across flattened time–frequency tokens.
+
+    Each stage applies residual connections and GroupNorm for stability.
+
+    Input shape  : (B, C, T, F)
+    Output shape : (B, C, T, F)
     """
-    def __init__(self, hidden_dim, num_heads, dropout=0.1, attention_dropout=0.1, gn_groups=8):
+
+    def __init__(
+        self,
+        hidden_dim: int,
+        num_heads: int,
+        dropout: float,
+        attention_dropout: float,
+        gn_groups: int
+    ) -> None:
+
         super().__init__()
 
-        # TransformerEncoders 
+        # TransformerEncoders for each stage
         self.time_transformer = TransformerEncoder(
-            num_heads=num_heads, hidden_dim=hidden_dim,
-            gru_dim=hidden_dim * 4, dropout=dropout, attention_dropout=attention_dropout
+            num_heads=num_heads,
+            hidden_dim=hidden_dim,
+            gru_dim=hidden_dim * 4,
+            dropout=dropout,
+            attention_dropout=attention_dropout
         )
         self.freq_transformer = TransformerEncoder(
-            num_heads=num_heads, hidden_dim=hidden_dim,
-            gru_dim=hidden_dim * 4, dropout=dropout, attention_dropout=attention_dropout
+            num_heads=num_heads,
+            hidden_dim=hidden_dim,
+            gru_dim=hidden_dim * 4,
+            dropout=dropout,
+            attention_dropout=attention_dropout
         )
         self.global_transformer = TransformerEncoder(
-            num_heads=num_heads, hidden_dim=hidden_dim,
-            gru_dim=hidden_dim * 4, dropout=dropout, attention_dropout=attention_dropout
+            num_heads=num_heads,
+            hidden_dim=hidden_dim,
+            gru_dim=hidden_dim * 4,
+            dropout=dropout,
+            attention_dropout=attention_dropout
         )
 
-        # Normalization layers (applied in channels-first format)
+        # Normalization layers (channel-wise)
         self.norm_t = nn.GroupNorm(gn_groups, hidden_dim)
         self.norm_f = nn.GroupNorm(gn_groups, hidden_dim)
         self.norm_g = nn.GroupNorm(gn_groups, hidden_dim)
 
-    def forward(self, x, T, F):
+    def forward(self, x: Tensor) -> Tensor:
         """
+        Forward pass through the TFT block.
+
         Args:
-            x: (B, C, T, F) input tensor
-            T, F: expected time and frequency dims
+            x (Tensor): Input tensor of shape (B, C, T, F)
 
         Returns:
-            (B, T*F, C) sequence after Time–Freq–Global transformers
+            Tensor: Output tensor of shape (B, C, T, F)
         """
-        B, C, t, f = x.shape
-        assert t == T and f == F, f"Expected input ({T},{F}), got ({t},{f})"
+        B, C, T, F = x.shape  
 
-        # Put channels last for easier reshaping
-        feat = x.permute(0, 2, 3, 1)  # (B, T, F, C)
+        # Rearrange to (B, T, F, C) 
+        feat = x.permute(0, 2, 3, 1)
 
-        # --- Time Transformer (over T, for each freq bin) ---
+        # --- Time Transformer (across T for each F) ---
         t_in = feat.permute(0, 2, 1, 3).reshape(B * F, T, C)   # (B*F, T, C)
         t_out = self.time_transformer(t_in)                    # (B*F, T, C)
         t_out = t_out.reshape(B, F, T, C).permute(0, 2, 1, 3)  # (B, T, F, C)
-        feat = self.norm_t((feat + t_out).permute(0, 3, 1, 2)) # residual + norm  (B, C, T, F)
+        feat = self.norm_t((feat + t_out).permute(0, 3, 1, 2)) # residual + norm (B, C, T, F)
         feat = feat.permute(0, 2, 3, 1)                        # back to (B, T, F, C)
 
-        # --- Frequency Transformer (over F, for each time step) ---
+        # --- Frequency Transformer (across F for each T) ---
         f_in = feat.reshape(B * T, F, C)                       # (B*T, F, C)
         f_out = self.freq_transformer(f_in)                    # (B*T, F, C)
-        f_out = f_out.reshape(B, T, F, C)                      # (B, T, F, C)  
-        feat = self.norm_f((feat + f_out).permute(0, 3, 1, 2)) # residual + norm  (B, C, T, F) 
+        f_out = f_out.reshape(B, T, F, C)                      # (B, T, F, C)
+        feat = self.norm_f((feat + f_out).permute(0, 3, 1, 2)) # residual + norm (B, C, T, F)
         feat = feat.permute(0, 2, 3, 1)                        # back to (B, T, F, C)
 
-        # --- Global Transformer (over flattened T*F tokens) ---
+        # --- Global Transformer (over all T*F tokens) ---
         g_in = feat.reshape(B, T * F, C)                       # (B, T*F, C)
         g_out = self.global_transformer(g_in)                  # (B, T*F, C)
-        g_out = g_out.reshape(B, T, F, C)                      # (B, T, F, C)  
-        feat = self.norm_g((feat + g_out).permute(0, 3, 1, 2)) # residual + norm  (B, C, T, F)
-        feat = feat.permute(0, 2, 3, 1)                        # back to (B, T, F, C)
+        g_out = g_out.reshape(B, T, F, C)                      # (B, T, F, C)
+        feat = self.norm_g((feat + g_out).permute(0, 3, 1, 2)) # residual + norm (B, C, T, F)
 
-        return feat.reshape(B, T * F, C)  # flatten tokens
+        return feat
 
 
 class BottleNeckBlock(nn.Module):
     """
+    Bottleneck block that stacks multiple TFT blocks sequentially.
+
     Pipeline:
-      1. 1x1 Conv → project input channels → hidden_dim
-      2. N TFTs stacked sequentially
-      3. 1x1 Conv → refine output
-      4. Grouped 1x1 Conv → project to out_channels
+        1. 1x1 Conv → project input channels to hidden_dim
+        2. N sequential TFT blocks
+        3. 1x1 Conv → refine intermediate output
+        4. Grouped 1x1 Conv → project to out_channels
 
     Args:
-        in_channels:  input channel dim
-        hidden_dim:   embedding dim inside transformer
-        num_heads:    attention heads
-        num_blocks:   number of stacked bottlenecks
-        gn_groups:    groups for GroupNorm + grouped conv
-        out_channels: final output channels (defaults to hidden_dim)
+        in_channels (int): Input channels
+        hidden_dim (int): Internal hidden dimension
+        num_heads (int): Attention heads in each transformer
+        num_blocks (int): Number of stacked TFT blocks
+        gn_groups (int): Groups for GroupNorm and grouped 1x1 conv
     """
-    def __init__(self, in_channels, hidden_dim, num_heads, num_blocks=2, gn_groups=8, out_channels=None):
-        super().__init__()
-        out_channels = out_channels or hidden_dim
 
+    def __init__(
+        self,
+        in_channels: int,
+        hidden_dim: int = 64,
+        num_heads: int = 4,
+        num_blocks: int = 4,
+        gn_groups: int = 8
+    ) -> None:
+
+        super().__init__()
+        out_channels = in_channels
+
+        # Project input to hidden dimension
         self.input_proj = nn.Conv2d(in_channels, hidden_dim, kernel_size=1)
+
+        # Stack TFT blocks
         self.bottlenecks = nn.ModuleList([
-            TFTblock(hidden_dim, num_heads, gn_groups)
+            TFTblock(
+                hidden_dim=hidden_dim,
+                num_heads=num_heads,
+                dropout=0.1,               # default dropout
+                attention_dropout=0.1,     # default attention dropout
+                gn_groups=gn_groups
+            )
             for _ in range(num_blocks)
         ])
+
+        # Output projection
         self.output_proj = nn.Conv2d(hidden_dim, hidden_dim, kernel_size=1)
+
+        # Grouped 1x1 convolution
         self.gconv = nn.Conv2d(hidden_dim, out_channels, kernel_size=1, groups=gn_groups)
 
-    def forward(self, x, T, F):
+    def forward(self, x: Tensor, T: int, F: int) -> Tensor:
         """
         Args:
-            x: (B, C, T, F)
-            T, F: time and frequency dims
+            x (Tensor): Input tensor (B, C, T, F)
+            T (int): Expected time dimension
+            F (int): Expected frequency dimension
 
         Returns:
-            (B, out_channels, T, F)
+            Tensor: Output tensor (B, out_channels, T, F)
         """
         B, C, t, f = x.shape
-        assert t == T and f == F, f"Expected input ({T},{F}), got ({t},{f})"
+        assert (t, f) == (T, F), f"Expected input ({T},{F}), got ({t},{f})"
 
-        # Step 1: Input projection
+        # Input projection
         x = self.input_proj(x)  # (B, hidden_dim, T, F)
 
-        # Step 2: Sequential bottlenecks
+        # Sequential TFT blocks
         for block in self.bottlenecks:
-            x_seq = block(x, T, F)                              # (B, T*F, hidden_dim)
-            x = x_seq.permute(0, 2, 1).reshape(B, x.shape[1], T, F)
+            x = block(x)        # (B, hidden_dim, T, F)
 
-        # Step 3: Output projection
+        # Output projection
         x = self.output_proj(x)
 
-        # Step 4: Grouped 1x1 conv (final projection)
+        # Final grouped conv
         x = self.gconv(x)
 
-        return x  # (B, out_channels, T, F)
+        return x                # (B, out_channels, T, F)
