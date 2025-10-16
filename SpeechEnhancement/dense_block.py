@@ -22,7 +22,7 @@ class ConvNetBlock(nn.Module):
     
     Input and Output shape : (B, C_in, T, F)
     """
-    def __init__(self, in_channels, kernel_size=(3,3)):
+    def __init__(self, in_channels: int, kernel_size: Tuple[int, int]=(3,3)):
         """
         Args:
             in_channels (int): Number of input channels (C_in)
@@ -93,7 +93,7 @@ class DenseBlock(nn.Module):
     Output shape: (B, C, T, F)
     """
 
-    def __init__(self, in_channels):
+    def __init__(self, in_channels: int):
         super().__init__()
         c = in_channels
 
