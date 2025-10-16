@@ -1,32 +1,3 @@
-"""
-STFT and ISTFT Processing Utilities
------------------------------------
-
-This file defines the STFTProcessor class, which provides a simple 
-interface for converting audio waveforms into their time-frequency 
-representations (magnitude + phase) and reconstructing them back 
-to the time domain.
-
-Key Features:
--------------
-- Forward Short-Time Fourier Transform (STFT):
-    * Converts a noisy waveform into its complex spectrogram.
-    * Separates and returns magnitude and phase components.
-    * Magnitude is typically used as input to neural networks.
-    * Phase can be stored for reconstruction.
-
-- Inverse STFT (ISTFT):
-    * Reconstructs time-domain waveform from magnitude + phase.
-    * Useful for evaluating enhanced magnitude spectrograms.
-
-Typical Shapes:
----------------
-- Input waveform: [B, 1, T] or [B, T]
-- Magnitude:      [B, F, T_frames]
-- Phase:          [B, F, T_frames]
-
-"""
-
 import torch
 import torchaudio
 
@@ -70,7 +41,7 @@ class STFTProcessor:
 
     def stft(self, clean_wave, noisy_wave):
         """
-        Compute STFT for clean (complex) and noisy (mag + phase).
+        Compute STFT for clean and noisy waveforms.
 
         Args:
             clean_wave (Tensor): [B, 1, T]
