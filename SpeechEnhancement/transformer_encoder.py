@@ -1,7 +1,6 @@
 import torch
 import torch.nn as nn
 from functools import partial
-from typing import Callable
 
 
 class GRUFFNBlock(nn.Module):
@@ -27,7 +26,7 @@ class GRUFFNBlock(nn.Module):
             elif "bias" in name:
                 nn.init.zeros_(param)
 
-    def forward(self, x: torch.Tensor):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         gru_out, _ = self.gru(x)        # (batch, seq_len, gru_hidden_size)
         activated = self.act(gru_out)   # ReLU
         out = self.proj(activated)      # project back to in_dim
@@ -36,9 +35,7 @@ class GRUFFNBlock(nn.Module):
 
 class TransformerEncoder(nn.Module):
     """
-    Single Transformer Encoder
-    --------------------
-    Combines:
+    Single Transformer Encoder:
       1. Multi-head self-attention + residual + LayerNorm
       2. GRU-FFN (GRU -> ReLU -> Linear) + residual + LayerNorm
 
@@ -51,20 +48,21 @@ class TransformerEncoder(nn.Module):
         gru_dim: int,
         dropout: float = 0.1,
         attention_dropout: float = 0.1,
-        norm_layer: Callable[..., torch.nn.Module] = partial(nn.LayerNorm, eps=1e-6),
+        norm_layer: type = nn.LayerNorm,
     ):
         super().__init__()
+        # Multi-head attention
         self.self_attention = nn.MultiheadAttention(
-            hidden_dim, num_heads, dropout=attention_dropout, batch_first=True
-        )
+            hidden_dim, num_heads, dropout=attention_dropout, batch_first=True)
         self.dropout1 = nn.Dropout(dropout)
-        self.ln1 = norm_layer(hidden_dim)
+        self.ln1 = norm_layer(hidden_dim, eps=1e-6)
 
+        # GRU-based feed-forward
         self.gru_ffn = GRUFFNBlock(hidden_dim, gru_dim, dropout)
         self.dropout2 = nn.Dropout(dropout)
-        self.ln2 = norm_layer(hidden_dim)
+        self.ln2 = norm_layer(hidden_dim, eps=1e-6)
 
-    def forward(self, x: torch.Tensor):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         torch._assert(x.dim() == 3, f"Expected (batch, seq_len, hidden_dim) got {x.shape}")
 
         # ---- Multi-head attention block ----
