@@ -1,20 +1,21 @@
 import torch
 import torchaudio
 
-# -----------------------------
-# Global constants 
-# -----------------------------
+
+# -------- Global constants -------- #
 N_FFT = 512
 WIN_LENGTH = 512
 HOP_LENGTH = 256
 
-T_length = 16000
+T_length = 16000 
+
 
 class STFTProcessor:
+    """
+    STFT/ISTFT processor for waveform batches.
+    """
     def __init__(self, n_fft=N_FFT, win_length=WIN_LENGTH, hop_length=HOP_LENGTH):
         """
-        STFT/ISTFT processor for waveform batches.
-
         Args:
             n_fft (int): FFT size.
             win_length (int): Window size.
