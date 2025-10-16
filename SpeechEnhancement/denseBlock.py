@@ -3,55 +3,75 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
-
-
-class ConvNet(nn.Module):
-    def __init__(self, channels, kernel_size=(3,3), dilation=1):
+class ConvNetBlock(nn.Module):
+    """
+    A convolutional network block that uses:
+    - Layer normalization across channels
+    - Pointwise (1x1) and depthwise convolutions
+    - Gated Linear Unit (GLU) activation
+    - Two residual connections for stability and feature reuse
+    
+    Input shape : (B, C_in, T, F)
+    Output shape: (B, C_out, T, F)
+    """
+    def __init__(self, in_channels, out_channels, hidden_channels, kernel_size=(3,3)):
+        """
+        Args:
+            in_channels (int): Number of input channels (C_in)
+            out_channels (int): Number of output channels (C_out)
+            hidden_channels (int): Hidden channel size for intermediate layers with range [C_out, C_in]
+            kernel_size (tuple): Kernel size for depthwise convolutions
+        """
         super().__init__()
-        padding = (
-            (kernel_size[0] - 1) // 2 * dilation,
-            (kernel_size[1] - 1) // 2 * dilation
-        )
+        
+        # Layer norm over channel dimension
+        self.layer_norm = nn.LayerNorm(in_channels)
 
-        self.ln = nn.LayerNorm(channels)
+        # Pointwise convolution   
+        self.pw_conv1 = nn.Conv2d(in_channels, hidden_channels, kernel_size=1)
 
-        self.pw1 = nn.Conv2d(channels, channels, kernel_size=1)
+        # Depthwise convolution 
+        self.dw_conv1 = nn.Conv2d(hidden_channels, hidden_channels, kernel_size=kernel_size, 
+                                  padding='same', groups=hidden_channels)
+        
+        # GLU activation splits channel dim into 2 halves -> output = half channels
+        self.glu = nn.GLU(dim=1)
 
-        self.dw1 = nn.Conv2d(
-            channels, channels, kernel_size, padding=padding,
-            dilation=dilation, groups=channels
-        )
-
-        self.glu_fc = nn.Conv2d(channels, channels * 2, kernel_size=1)
-
-        self.pw2 = nn.Conv2d(channels, channels, kernel_size=1)
-
-        self.dw2 = nn.Conv2d(
-            channels, channels, kernel_size, padding=padding,
-            dilation=dilation, groups=channels
-        )
-        self.pw3 = nn.Conv2d(channels, channels, kernel_size=1)
+        self.pw_conv2 = nn.Conv2d(hidden_channels//2, hidden_channels, kernel_size=1)
+        
+        self.dw_conv2 = nn.Conv2d(hidden_channels, hidden_channels, kernel_size=kernel_size, 
+                                  padding='same', groups=hidden_channels)
+        self.pw_conv3 = nn.Conv2d(hidden_channels, out_channels, kernel_size=1)
 
     def forward(self, x):
-        #B, C, T, F = x.shape
-        # LayerNorm -> (B,T,F,C)
-        y = x.permute(0, 2, 3, 1)
-        y = self.ln(y)
-        y = y.permute(0, 3, 1, 2)
+        """
+        Forward pass of the block.
+        Args:
+            x: Tensor of shape (B, C_in, T, F)
+        Returns:
+            Tensor of shape (B, C_out, T, F)
+        """
+        residual1 = x
+        
+        # Layer norm over channels requires permuting to B,T,F,C
+        x = x.permute(0, 2, 3, 1)  # B,T,F,C
+        x = self.layer_norm(x)
+        x = x.permute(0, 3, 1, 2)  # B,C,T,F
+        
+        x = self.pw_conv1(x)
+        x = self.dw_conv1(x)
+        x = self.glu(x)
+        x = self.pw_conv2(x)
+        
+        # Residual connection 1 (align channels)
+        residual2 = x + residual1[:, :x.shape[1], :, :]
+        
+        x = self.dw_conv2(residual2)
+        x = self.pw_conv3(x)
 
-        y = self.pw1(y)
-        y = self.dw1(y)
-
-        y = self.glu_fc(y)
-        y = F.glu(y, dim =1)
-
-        y = self.pw2(y)
-        y = y + x  # residual 1
-
-        z = self.dw2(y)
-        z = self.pw3(z)
-        out = y + z  # residual 2
-        return out
+        # Residual connection 2 (align channels)
+        x = x + residual2[:, :x.shape[1], :, :]
+        return x
 
 
 class DilatedConv(nn.Module):
