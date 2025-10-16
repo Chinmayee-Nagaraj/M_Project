@@ -14,7 +14,7 @@ class STFTProcessor:
     """
     STFT/ISTFT processor for waveform batches.
     """
-    def __init__(self, n_fft=N_FFT, win_length=WIN_LENGTH, hop_length=HOP_LENGTH):
+    def __init__(self, n_fft: int=N_FFT, win_length: int=WIN_LENGTH, hop_length: int=HOP_LENGTH):
         """
         Args:
             n_fft (int): FFT size.
