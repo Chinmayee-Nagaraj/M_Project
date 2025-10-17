@@ -1,92 +1,85 @@
 import torch
 import torch.nn as nn
-from denseBlock import DenseBlock
-from bottleneck import TFT
+
+from dense_block import DenseBlock
+from bottleneck import BottleNeckBlock
+
 
 class EncoderBlock(nn.Module):
     """Encoder: DenseBlock → Conv3x3 → PReLU"""
     def __init__(self, in_channels, out_channels):
         super().__init__()
-        self.dense = DenseBlock(in_channels, growth_rate=out_channels)                
+        self.dense = DenseBlock(in_channels)                
         self.conv = nn.Conv2d(self.dense.out_channels, out_channels, 
                               kernel_size=3, stride=2, padding=1)
         self.prelu = nn.PReLU()
 
     def forward(self, x):
         x = self.dense(x)
-        skip = x                     # save BEFORE downsampling
-        x = self.prelu(self.conv(x)) # downsampled path
-        return x, skip
+        x = self.prelu(self.conv(x)) 
+        return x
 
 
 class DecoderBlock(nn.Module):
     """Decoder: DenseBlock → ConvTranspose3x3 → PReLU"""
-    def __init__(self, in_channels, skip_channels, out_channels):
+    def __init__(self, in_channels, en_channels, out_channels):
         super().__init__()
-        total_in = in_channels + skip_channels
-        self.dense = DenseBlock(total_in, growth_rate=out_channels)
-
-        self.conv = nn.ConvTranspose2d(self.dense.out_channels, out_channels,kernel_size=3, stride=2, padding=1, output_padding=1)
+        total_in = in_channels + en_channels
+        self.dense = DenseBlock(total_in)
+        self.conv = nn.ConvTranspose2d(self.dense.out_channels, out_channels,
+                                       kernel_size=3, stride=2, padding=1, output_padding=(1,0))
         self.prelu = nn.PReLU()
     
-    def forward(self, x, skip):
-        # align spatial sizes if off by 1 pixel
-        if x.shape[2:] != skip.shape[2:]:
-            skip = F.interpolate(skip, size=x.shape[2:], mode="bilinear", align_corners=False)
-
-        x = torch.cat([x, skip], dim=1)
+    def forward(self, x, en):
+        x = torch.cat([x, en], dim=1)
         x = self.dense(x)
-        x = self.conv(x)
-        x = self.prelu(x)
+        x = self.prelu(self.conv(x)) 
         return x
 
-# -----------------------
-# Full U-Net with TFT bottleneck
-# -----------------------
-class UNetWithTFT(nn.Module):
+
+class TFDense_Net(nn.Module):
     def __init__(self, in_channels=1, base_channels=64, num_layers=3,
-                 hidden_dim=128, num_heads=4, num_blocks=2, gn_groups=8):
+                 hidden_dim=64, num_heads=4, num_blocks=4, gn_groups=8):
         super().__init__()
+
+        conv1x1 = nn.Conv2d(in_channels=1, out_channels=base_channels, kernel_size=1)
+                     
         # Encoder
         self.encoders = nn.ModuleList()
-        channels = in_channels
+        channels = base_channels
 
-        
         for i in range(num_layers):
-            enc = EncoderBlock(channels, base_channels * (2 ** i))
+            enc = EncoderBlock(channels, channels)
             self.encoders.append(enc)
-            channels = base_channels * (2 ** i) 
 
-        # Bottleneck = TFT
-        self.bottleneck = TFT(
+        # Bottleneck
+        self.bottleneck = BottleNeckBlock(
             in_channels=channels,
             hidden_dim=hidden_dim,
             num_heads=num_heads,
             num_blocks=num_blocks,
-            gn_groups=gn_groups,
-            out_channels=channels  # keep same for smooth decoder input
+            gn_groups=gn_groups
         )        
 
         # Decoder
         self.decoders = nn.ModuleList()
         for i in reversed(range(num_layers)):
-            skip_channels = base_channels * (2 ** i)
-            out_ch = base_channels * (2 ** i)
-            dec = DecoderBlock(channels, skip_channels, out_ch)
+            dec = DecoderBlock(channels, channels, channels)
             self.decoders.append(dec)
-            channels = out_ch   # instead of formula
                      
         # Final output
         self.final = nn.Conv2d(base_channels, in_channels, kernel_size=1)
 
-    def forward(self, x, T=None, F=None):
+    def forward(self, x):
+        x_proj = conv1x1(x)
+        
         B, C, T, F = x.shape
         
         # Encoder
-        skips = []
+        encoder_ops = []
         for enc in self.encoders:
-            x, skip = enc(x)
-            skips.append(skip)
+            x = enc(x)
+            encoder_ops.append(skip)
 
         # Use the actual downsampled dims
         T_down, F_down = x.shape[2], x.shape[3]
@@ -95,7 +88,7 @@ class UNetWithTFT(nn.Module):
         x = self.bottleneck(x, T_down, F_down)
         
         # Decoder
-        for dec, skip in zip(self.decoders, reversed(skips)):
-            x = dec(x, skip)
+        for dec, en in zip(self.decoders, reversed(encoder_ops)):
+            x = dec(x, en)
 
         return self.final(x)
