@@ -43,7 +43,7 @@ from typing import Tuple, Optional
 
 import torch
 import torchaudio
-import torch.nn.functional as F
+import torch.nn.functional as Func
 from torch import Tensor
 from torch.utils.data import Dataset, DataLoader, random_split
 
@@ -129,8 +129,8 @@ class VCTK_DEMAND_Dataset(Dataset):
         if (length < TARGET_LEN):
             # If too short → pad once (no retries needed)
             pad_size = TARGET_LEN - length    
-            clean_w = F.pad(clean_wave, (0, pad_size))
-            noisy_w = F.pad(noisy_wave, (0, pad_size))
+            clean_w = Func.pad(clean_wave, (0, pad_size))
+            noisy_w = Func.pad(noisy_wave, (0, pad_size))
         
         else:
             # Retry loop only for random cuts
