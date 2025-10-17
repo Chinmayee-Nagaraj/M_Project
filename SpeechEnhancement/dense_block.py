@@ -2,7 +2,6 @@ import warnings
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
 
 # Suppress just the UserWarning from F.conv2d about padding
