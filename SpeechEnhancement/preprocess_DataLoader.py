@@ -160,7 +160,7 @@ class VCTK_DEMAND_Dataset(Dataset):
         return clean_wave, noisy_wave, length
       
 
-    def load_data(
+def load_data(
             ds_dir: str,
             split: float = 0.9,
             batch_size: int = 4,
