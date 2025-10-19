@@ -14,7 +14,7 @@ class STFTProcessor:
     """
     STFT/ISTFT processor for waveform batches.
     """
-    def __init__(self, n_fft: int=N_FFT, win_length: int=WIN_LENGTH, hop_length: int=HOP_LENGTH):
+    def __init__(self,device, n_fft: int=N_FFT, win_length: int=WIN_LENGTH, hop_length: int=HOP_LENGTH):
         """
         Args:
             n_fft (int): FFT size.
@@ -31,14 +31,14 @@ class STFTProcessor:
             win_length=win_length,
             hop_length=hop_length,
             power=None         # keep complex output   
-        )
+        ).to(device)
 
         # Inverse STFT
         self.istft_transform = torchaudio.transforms.InverseSpectrogram(
             n_fft=n_fft,
             win_length=win_length,
             hop_length=hop_length
-        )
+        ).to(device)
 
     def stft(self, clean_wave, noisy_wave):
         """
