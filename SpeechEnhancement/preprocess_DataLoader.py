@@ -43,7 +43,7 @@ from typing import Tuple, Optional
 
 import torch
 import torchaudio
-import torch.nn.functional as Func
+import torch.nn.functional as F
 from torch import Tensor
 from torch.utils.data import Dataset, DataLoader, random_split
 
@@ -111,8 +111,8 @@ class VCTK_DEMAND_Dataset(Dataset):
         noisy_file = os.path.join(self.noisy_dir, self.clean_wav_names[idx])
 
         # Load waveforms
-        clean_wave, clean_sr = torchaudio.load(clean_file) 
-        noisy_wave, sr = torchaudio.load(noisy_file)
+        clean_wave, clean_sr = torchaudio.load(clean_file, normalize=True, channels_first=True) 
+        noisy_wave, sr = torchaudio.load(noisy_file, normalize=True, channels_first=True)
 
         assert clean_sr == sr, "Clean and noisy sample rates do not match!"
 
@@ -129,8 +129,8 @@ class VCTK_DEMAND_Dataset(Dataset):
         if (length < TARGET_LEN):
             # If too short → pad once (no retries needed)
             pad_size = TARGET_LEN - length    
-            clean_w = Func.pad(clean_wave, (0, pad_size))
-            noisy_w = Func.pad(noisy_wave, (0, pad_size))
+            clean_w = F.pad(clean_wave, (0, pad_size))
+            noisy_w = F.pad(noisy_wave, (0, pad_size))
         
         else:
             # Retry loop only for random cuts
