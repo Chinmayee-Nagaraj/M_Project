@@ -2,6 +2,7 @@ import warnings
 
 import torch
 import torch.nn as nn
+from typing import Tuple
 
 
 # Suppress just the UserWarning from F.conv2d about padding
