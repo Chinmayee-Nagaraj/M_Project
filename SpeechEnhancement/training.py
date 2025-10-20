@@ -51,7 +51,7 @@ def evaluate(model, val_loader, device, stft_processor, loss_fn, stoi_metric, pe
             loss_wav = loss_fn(rec_wav, clean)
 
             # Total loss
-            loss = alpha*loss_m + beta*loss_wav)
+            loss = alpha*loss_m + beta*loss_wav
             val_loss += loss.item()
 
             est, ref = rec_wav.cpu(), clean.cpu()
