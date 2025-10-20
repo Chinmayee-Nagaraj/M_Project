@@ -13,6 +13,11 @@ from stft_utils import STFTProcessor
 from tfdense_net import TFDense_Net
 from scheduler import DynamicLRScheduler
 
+# Computed mean/std from noisy training set for the spectrogram magnitude
+mean_noisy, std_noisy = 0.2348, 1.0837
+
+alpha = 0.0001
+beta = 1
 
 # ------------------- Evaluation -------------------
 def evaluate(model, val_loader, device, stft_processor, loss_fn, stoi_metric, pesq_metric, sisdr_metric):
@@ -29,10 +34,6 @@ def evaluate(model, val_loader, device, stft_processor, loss_fn, stoi_metric, pe
             # --- Forward pass ---
             clean_m, noisy_m, noisy_p = stft_processor.stft(clean, noisy)
 
-            # Log compression of spectrogram magnitude (range [0,5])
-            clean_m = torch.log1p(torch.clamp(clean_m, min=0.0))
-            noisy_m = torch.log1p(torch.clamp(noisy_m, min=0.0))
-
             # Predict enhanced magnitude from noisy magnitude
             pred_m = model(noisy_m.unsqueeze(1).permute(0,1,3,2)) 
             pred_m = pred_m.squeeze(1).permute(0,2,1)              # back to [B, F, T]
@@ -41,16 +42,13 @@ def evaluate(model, val_loader, device, stft_processor, loss_fn, stoi_metric, pe
                 print("Predicted shape error\n")
 
             # --- Loss in spectrogram domain ---
-            loss_m = loss_fn(pred_m, clean_m)/25.0
-
-            # Remove Log compressioin of predicted spectrogram magnitude
-            pred_m = torch.expm1(torch.clamp(pred_m, max=10.0))
+            loss_m = loss_fn(pred_m, clean_m)
 
             # --- Reconstruct waveform ---
             rec_wav = stft_processor.istft(pred_m, noisy_p, length=16000)
 
             # --- Loss in waveform domain ---
-            loss_wav = loss_fn(rec_wav, clean)/4.0
+            loss_wav = loss_fn(rec_wav, clean)
 
             # Total loss
             loss = 0.5*(loss_m + loss_wav)
@@ -109,7 +107,7 @@ def train_model():
         model.train()
         epoch_loss = 0.0
 
-        pbar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{num_epochs}") #####################
+        pbar = tqdm(test_loader, desc=f"Epoch {epoch+1}/{num_epochs}") #####################
         for clean_wave, noisy_wave, _ in pbar:
             noisy_wave = noisy_wave.to(device)  # [B, 1, T]
             clean_wave = clean_wave.to(device)  # [B, 1, T]
@@ -117,9 +115,9 @@ def train_model():
             # --- Forward pass ---
             clean_mag, noisy_mag, noisy_phase = stft_processor.stft(clean_wave, noisy_wave)
 
-            # Log compression of spectrogram magnitude (range [0,5])
-            clean_mag = torch.log1p(torch.clamp(clean_mag, min=0.0))
-            noisy_mag = torch.log1p(torch.clamp(noisy_mag, min=0.0))
+            # Normalize spectrogram magnitudes
+            #clean_mag = (clean_mag - mean_noisy) / std_noisy
+            #noisy_mag = (noisy_mag - mean_noisy) / std_noisy
 
             # Predict enhanced magnitude from noisy magnitude
             pred_mag = model(noisy_mag.unsqueeze(1).permute(0,1,3,2)) 
@@ -129,19 +127,20 @@ def train_model():
                 print("Predicted shape error\n")
 
             # --- Loss in spectrogram domain ---       
-            loss_mag = loss_fn(pred_mag, clean_mag)/25.0
+            loss_mag = loss_fn(pred_mag, clean_mag)
 
-            # Remove Log compressioin of predicted spectrogram magnitude
-            pred_mag = torch.expm1(torch.clamp(pred_mag, max=10.0))
+            pred_mag = pred_mag * std_noisy + mean_noisy # Denormalization
 
             # --- Reconstruct waveform ---
-            rec_wave = stft_processor.istft(pred_mag, noisy_phase, length=16000)
+            rec_wave = stft_processor.istft(pred_mag, noisy_phase, length=16000)            
 
             # --- Loss in waveform domain ---
-            loss_wave = loss_fn(rec_wave, clean_wave)/2.0
+            loss_wave = loss_fn(rec_wave, clean_wave)
 
+            #print(f"Waveform MSE: {loss_wave.item()}, Spectrogram MSE: {loss_mag.item()}")
+            
             # Total loss
-            loss = 0.5*(loss_mag + loss_wave)
+            loss = alpha*loss_mag + beta*loss_wave
 
             # --- Backprop ---
             optimizer.zero_grad()
@@ -152,7 +151,7 @@ def train_model():
             optimizer.step()
 
             epoch_loss += loss.item()
-            pbar.set_postfix({"batch_loss": loss.item()})
+            pbar.set_postfix({"Batch_loss": loss.item()})
 
         avg_loss = epoch_loss / len(train_loader)
        
