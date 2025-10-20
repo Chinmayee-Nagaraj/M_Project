@@ -129,8 +129,6 @@ def train_model():
             # --- Loss in spectrogram domain ---       
             loss_mag = loss_fn(pred_mag, clean_mag)
 
-            pred_mag = pred_mag * std_noisy + mean_noisy # Denormalization
-
             # --- Reconstruct waveform ---
             rec_wave = stft_processor.istft(pred_mag, noisy_phase, length=16000)            
 
