@@ -119,5 +119,10 @@ class TFDense_Net(nn.Module):
             x = dec(x, en)
             x = Func.interpolate(x, size=(t_req,f_req), mode='bilinear')
 
-        # Final output
-        return self.final(x)
+        # Final output projection
+        x = self.final(x)
+
+        # Ensure non-negative STFT magnitude predictions
+        x = torch.relu(x)
+
+        return x
