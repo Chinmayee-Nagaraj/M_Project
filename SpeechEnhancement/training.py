@@ -16,8 +16,8 @@ from scheduler import DynamicLRScheduler
 # Computed mean/std from noisy training set for the spectrogram magnitude
 mean_noisy, std_noisy = 0.2348, 1.0837
 
-alpha = 0.0001
-beta = 1
+alpha = 0.5
+beta = 0.5
 
 # ------------------- Evaluation -------------------
 def evaluate(model, val_loader, device, stft_processor, loss_fn, stoi_metric, pesq_metric, sisdr_metric):
@@ -45,6 +45,7 @@ def evaluate(model, val_loader, device, stft_processor, loss_fn, stoi_metric, pe
             loss_m = loss_fn(pred_m, clean_m)
 
             # --- Reconstruct waveform ---
+            pred_m = torch.clamp(pred_m, min=1e-8, max=1e2)            
             rec_wav = stft_processor.istft(pred_m, noisy_p, length=16000)
 
             # --- Loss in waveform domain ---
@@ -59,9 +60,9 @@ def evaluate(model, val_loader, device, stft_processor, loss_fn, stoi_metric, pe
                 stoi_scores.append(stoi_metric(est, ref).item())
                 pesq_scores.append(pesq_metric(est, ref).item())
                 sisdr_scores.append(sisdr_metric(est, ref).item())
-            except Exception:
-                pass
-
+            except Exception as e:
+                print("Metric error:", e)
+   
     avg_loss = val_loss / len(val_loader)
     avg_stoi = sum(stoi_scores) / len(stoi_scores) if stoi_scores else 0.0
     avg_pesq = sum(pesq_scores) / len(pesq_scores) if pesq_scores else 0.0
@@ -107,7 +108,7 @@ def train_model():
         model.train()
         epoch_loss = 0.0
 
-        pbar = tqdm(test_loader, desc=f"Epoch {epoch+1}/{num_epochs}") #####################
+        pbar = tqdm(test_loader, desc=f"Epoch {epoch+1}/{num_epochs}") 
         for clean_wave, noisy_wave, _ in pbar:
             noisy_wave = noisy_wave.to(device)  # [B, 1, T]
             clean_wave = clean_wave.to(device)  # [B, 1, T]
@@ -130,6 +131,7 @@ def train_model():
             loss_mag = loss_fn(pred_mag, clean_mag)
 
             # --- Reconstruct waveform ---
+            pred_mag = torch.clamp(pred_mag, min=1e-8, max=1e2)
             rec_wave = stft_processor.istft(pred_mag, noisy_phase, length=16000)            
 
             # --- Loss in waveform domain ---
@@ -140,6 +142,11 @@ def train_model():
             # Total loss
             loss = alpha*loss_mag + beta*loss_wave
 
+            ############################################################################
+            if torch.isnan(loss):
+                print("NaN loss detected, skipping step")
+                continue 
+
             # --- Backprop ---
             optimizer.zero_grad()
             loss.backward()
@@ -147,6 +154,7 @@ def train_model():
             # Gradient clipping (L2-norm max = 5)
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=5.0)
             optimizer.step()
+            scheduler.step() 
 
             epoch_loss += loss.item()
             pbar.set_postfix({"Batch_loss": loss.item()})
