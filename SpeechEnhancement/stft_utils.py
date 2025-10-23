@@ -56,8 +56,8 @@ class STFTProcessor:
         clean_spec = self.stft_transform(clean_wave.squeeze(1))
         noisy_spec = self.stft_transform(noisy_wave.squeeze(1))
 
-        clean_mag = torch.abs(clean_spec)
-        noisy_mag = torch.abs(noisy_spec)
+        clean_mag = torch.abs(clean_spec) + 1e-8
+        noisy_mag = torch.abs(noisy_spec) + 1e-8
         noisy_phase = torch.angle(noisy_spec)  # phase in radians
 
         return clean_mag, noisy_mag, noisy_phase
@@ -80,3 +80,14 @@ class STFTProcessor:
         rec_noisy = self.istft_transform(noisy_spec, length=length).unsqueeze(1)
 
         return rec_noisy
+
+    def compute_mag(self, audio):
+        spec = self.stft_transform(audio.squeeze(1))  # complex tensor [B, F, T]
+        mag = torch.abs(spec) + 1e-8 # [B, F, T]
+        return mag
+    
+    def compute_mag_phase(self, audio):
+        spec = self.stft_transform(audio.squeeze(1))  # complex tensor [B, F, T]
+        mag = torch.abs(spec)+ 1e-8   # [B, F, T]
+        phase = torch.angle(spec) 
+        return mag, phase
