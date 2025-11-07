@@ -1,3 +1,4 @@
+import csv
 import os
 import torch
 import torchaudio
@@ -7,6 +8,8 @@ from tqdm import tqdm
 from torchmetrics.audio.stoi import ShortTimeObjectiveIntelligibility
 from torchmetrics.audio.pesq import PerceptualEvaluationSpeechQuality
 from torchmetrics.audio.sdr import ScaleInvariantSignalDistortionRatio
+
+from torchsummary import summary
 
 from preprocess_DataLoader import load_data
 from stft_utils import STFTProcessor
@@ -78,11 +81,28 @@ def evaluate(model, val_loader, device, stft_processor, loss_fn, stoi_metric, pe
 
 #-------------------- Training ---------------------
 def train_model():
+    
+    log_dir = "/kaggle/working/logs"
+    os.makedirs(log_dir, exist_ok=True)
+    log_path = os.path.join(log_dir, "training_log.csv")
+    
+    # Create CSV file with header
+    if not os.path.exists(log_path):
+        with open(log_path, mode="w", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(["epoch", "train_loss", "val_loss", "val_stoi", "val_pesq", "val_sisdr"])
+
+    
     device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Using device: {device}")
 
     # Dataset + DataLoader
-    dataset_dir = "../dataset/VCTK_DEMAND"
+    dataset_dir = "/kaggle/input/vctk_demand_dns_dataset"
+
+    # Check if exists
+    if not os.path.exists(dataset_dir):
+        raise FileNotFoundError(f"Dataset not found at {dataset_dir}")
+    
     train_loader, val_loader, test_loader = load_data(dataset_dir)
 
     # Model, loss, optimizer
@@ -96,19 +116,44 @@ def train_model():
     stoi_metric = ShortTimeObjectiveIntelligibility(fs=16000, extended=False)
     pesq_metric = PerceptualEvaluationSpeechQuality(fs=16000, mode="wb")
     sisdr_metric = ScaleInvariantSignalDistortionRatio()
-
-    # Make checkpoint directory
-    os.makedirs("checkpoint", exist_ok=True)
     
     # Training params
-    num_epochs = 50
+    start_epoch = 0
+    num_epochs = 300
+
+
+    # --- Checkpoint handling ---
+    checkpoint_dir = "/kaggle/working/checkpoint"
+    os.makedirs(checkpoint_dir, exist_ok=True)
+
+    checkpoint_files = [f for f in os.listdir(checkpoint_dir) if f.endswith(".pth")]
+
+    # Auto-resume: load latest checkpoint if present
+    if checkpoint_files:
+        latest_ckpt = max(
+            checkpoint_files,
+            key=lambda f: int(f.split("_")[1].split(".")[0])  # assumes format epoch_XX.pth
+        )
+        ckpt_path = os.path.join(checkpoint_dir, latest_ckpt)
+        checkpoint = torch.load(ckpt_path, map_location=device)
+
+        model.load_state_dict(checkpoint["model_state_dict"])
+        optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+        start_epoch = checkpoint["epoch"]
+        print(f"Resumed from checkpoint: {ckpt_path} (epoch {start_epoch})")
+    else:
+        print("Starting training from scratch")
+
+    
+    # Model summary
+    summary(model, input_size=(1, 257, 63))
     
     # Training loop
-    for epoch in range(num_epochs):
+    for epoch in range(start_epoch, num_epochs):
         model.train()
         epoch_loss = 0.0
 
-        pbar = tqdm(test_loader, desc=f"Epoch {epoch+1}/{num_epochs}") 
+        pbar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{num_epochs}") 
         for clean_wave, noisy_wave, _ in pbar:
             noisy_wave = noisy_wave.to(device)  # [B, 1, T]
             clean_wave = clean_wave.to(device)  # [B, 1, T]
@@ -125,7 +170,7 @@ def train_model():
             pred_mag = pred_mag.squeeze(1).permute(0,2,1)            # back to [B, F, T]
 
             if pred_mag.shape != clean_mag.shape:
-                print("Predicted shape error\n")
+                print("Predicted shape mismatch!\n")
 
             # --- Loss in spectrogram domain ---       
             loss_mag = loss_fn(pred_mag, clean_mag)
@@ -161,15 +206,17 @@ def train_model():
 
         avg_loss = epoch_loss / len(train_loader)
        
-        # Save checkpoint every epoch
-        checkpoint_path = f"checkpoint/epoch_{epoch+1}.pth"
-        torch.save({
-            "epoch": (epoch+1),
-            "model_state_dict": model.state_dict(),
-            "optimizer_state_dict": optimizer.state_dict(),
-            "loss": avg_loss,
-        }, checkpoint_path)
-        print(f"Saved checkpoint: {checkpoint_path}")
+        # Save checkpoint every 10 epochs        
+        if (epoch + 1) % 10 == 0:
+            checkpoint_path = os.path.join(checkpoint_dir, f"epoch_{epoch+1}.pth")
+            torch.save({
+                "epoch": (epoch+1),
+                "model_state_dict": model.state_dict(),
+                "optimizer_state_dict": optimizer.state_dict(),
+                "loss": avg_loss,
+            }, checkpoint_path)
+            print(f"Saved checkpoint: {checkpoint_path}")
+
 
         # ---------------- VALIDATION ----------------
         val_loss, val_stoi, val_pesq, val_sisdr = evaluate(
@@ -182,6 +229,13 @@ def train_model():
               f"--> STOI: {val_stoi:.4f}\t"
               f"--> PESQ: {val_pesq:.4f}\t"
               f"--> SI-SDR: {val_sisdr:.4f} dB")
+        
+        try:
+            with open(log_path, mode="a", newline="") as f:
+                writer = csv.writer(f)
+                writer.writerow([epoch + 1, avg_loss, val_loss, val_stoi, val_pesq, val_sisdr])
+        except Exception as e:
+            print(f"Failed to log epoch {epoch+1}: {e}")
         
 
 if __name__ == "__main__":
