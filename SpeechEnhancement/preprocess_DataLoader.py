@@ -187,7 +187,6 @@ def load_data(
 
     # Create dataset objects
     full_train_ds = VCTK_DEMAND_Dataset(train_dir)
-    test_ds = VCTK_DEMAND_Dataset(test_dir)
    
     # Split train/val
     train_size: int = int(split * len(full_train_ds))
@@ -213,14 +212,21 @@ def load_data(
         pin_memory=pin_memory, 
         drop_last=False
     )
-
-    test_loader = DataLoader(
-        test_ds,
-        batch_size=batch_size,
-        shuffle=False,  # keep test deterministic
-        num_workers=num_workers,
-        pin_memory=pin_memory,
-        drop_last=False
-    )
+          
+    # --- Optional Test ---
+    if os.path.exists(test_dir):
+        test_ds = VCTK_DEMAND_Dataset(test_dir)
+        test_loader = DataLoader(
+            test_ds, 
+            batch_size=batch_size, 
+            shuffle=False,  # keep test deterministic
+            num_workers=num_workers, 
+            pin_memory=pin_memory, 
+            drop_last=False
+        )
+         
+    else:
+        print(f"No 'testset/' directory found in {ds_dir}. Skipping test_loader.")
+        test_loader = None
 
     return train_loader, val_loader, test_loader
