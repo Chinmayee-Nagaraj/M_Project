@@ -163,7 +163,7 @@ class VCTK_DEMAND_Dataset(Dataset):
 def load_data(
             ds_dir: str,
             split: float = 0.9,
-            batch_size: int = 4,
+            batch_size: int = 16,
             num_workers: int = 2,
             pin_memory: bool = True,
             shuffle: bool = True
