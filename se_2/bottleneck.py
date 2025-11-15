@@ -71,7 +71,7 @@ class TFTblock(nn.Module):
         B, C, T, F = x.shape  
 
         residual1 = x   # (B, C, T, F)
-
+        
         # --- Time Transformer (across T for each F) ---
         t_in = residual1.permute(0, 3, 2, 1).reshape(B * F, T, C)   # (B*F, T, C)
         t_out = self.time_transformer(t_in)                         # (B*F, T, C)
@@ -83,14 +83,14 @@ class TFTblock(nn.Module):
         f_in = residual2.reshape(B * T, F, C)                       # (B*T, F, C)
         f_out = self.freq_transformer(f_in)                         # (B*T, F, C)
         f_out = f_out.reshape(B, T, F, C).permute(0, 3, 1, 2)       # (B, C, T, F)
-        feat = self.norm_f(f_out) + residual2                       # residual + norm (B, C, T, F)
+        feat = self.norm_f(f_out) + residual2.permute(0, 3, 1, 2)   # residual + norm (B, C, T, F)
         residual3 = feat.permute(0, 2, 3, 1)                        # back to (B, T, F, C)
 
         # --- Global Transformer (over all T*F tokens) ---
         g_in = residual3.reshape(B, T * F, C)                       # (B, T*F, C)
         g_out = self.global_transformer(g_in)                       # (B, T*F, C)
         g_out = g_out.reshape(B, T, F, C).permute(0, 3, 1, 2)       # (B, C, T, F)
-        feat = self.norm_g(g_out) + residual3                       # residual + norm (B, C, T, F)
+        feat = self.norm_g(g_out) + residual3.permute(0, 3, 1, 2)   # residual + norm (B, C, T, F)
 
         return feat
 
