@@ -142,10 +142,10 @@ class CompositeSpeechEnhancementLoss(nn.Module):
         total_loss = (
             1.0 * L1_mag_loss +
             1.0 * LogMag_loss +
-            1.0 * SpecConv_loss +
-            1.0 * MRSTFT_loss +
-            1.0 * SISDR_loss +
-            0.001 * Mel_loss
+            0.5 * SpecConv_loss +
+            0.5 * MRSTFT_loss +
+            0.1 * SISDR_loss +
+            0.002 * Mel_loss
         )
 
         return {
