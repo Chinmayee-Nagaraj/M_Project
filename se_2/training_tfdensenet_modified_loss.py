@@ -17,8 +17,6 @@ from tfdense_net import TFDense_Net
 from scheduler import DynamicLRScheduler
 from loss_utils import CompositeSpeechEnhancementLoss
 
-alpha = 1
-beta = 0.01
 
 Mean = -0.00020485175894189195
 Var = 0.004213959431448535
