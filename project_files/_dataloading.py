@@ -33,8 +33,8 @@ def is_informative(wav, threshold=3.0):
 class VCTK_DEMAND_Dataset(Dataset):
     def __init__(self, data_dir):
 
-        self.clean_dir = os.path.join(data_dir, 'clean_testset_wav/clean_testset_wav')
-        self.noisy_dir = os.path.join(data_dir, 'noisy_testset_wav/noisy_testset_wav')
+        self.clean_dir = os.path.join(data_dir, 'clean_trainset_28spk_wav/clean_trainset_28spk_wav')
+        self.noisy_dir = os.path.join(data_dir, 'noisy_trainset_28spk_wav/noisy_trainset_28spk_wav')
 
         self.clean_wav_names = [f for f in os.listdir(self.clean_dir) if f.endswith(".wav")]
         self.clean_wav_names = sorted(self.clean_wav_names)

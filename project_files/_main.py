@@ -7,6 +7,7 @@ from torchmetrics.audio.sdr import ScaleInvariantSignalDistortionRatio
 from _tfdense_unet import TFDenseUNet
 from _dataloading import VCTK_DEMAND_Dataset
 import warnings
+import matplotlib.pyplot as plt
 
 # Suppress torchaudio warnings
 warnings.filterwarnings("ignore", category=UserWarning, module="torchaudio._backend.utils")
@@ -23,6 +24,18 @@ def si_sdr_loss(est, ref, eps=1e-8):
     return torch.mean(torch.clamp(20 - si_sdr, min=0))
 
 
+# ------------------- Multi-Resolution STFT Loss -------------------
+def multi_res_stft_loss(est, ref):
+    """Computes average STFT magnitude loss over multiple FFT sizes."""
+    fft_sizes = [256, 512, 1024]
+    total_loss = 0.0
+    for n_fft in fft_sizes:
+        est_spec = torch.stft(est, n_fft=n_fft, hop_length=n_fft // 4, return_complex=True)
+        ref_spec = torch.stft(ref, n_fft=n_fft, hop_length=n_fft // 4, return_complex=True)
+        total_loss += torch.mean((torch.abs(est_spec) - torch.abs(ref_spec)) ** 2)
+    return total_loss / len(fft_sizes)
+
+
 # ------------------- Evaluation -------------------
 def evaluate(model, val_loader, device, loss_fn, pesq_metric, stoi_metric, sisdr_metric):
     model.eval()
@@ -33,10 +46,14 @@ def evaluate(model, val_loader, device, loss_fn, pesq_metric, stoi_metric, sisdr
         for clean, noisy, length in val_loader:
             clean = clean.to(device).squeeze(1)
             noisy = noisy.to(device).squeeze(1)
-
             out_wave = model(noisy)
-            # Combined loss for reporting
-            loss = loss_fn(out_wave, clean) + 0.1 * si_sdr_loss(out_wave, clean)
+
+            # Combined loss
+            loss = (
+                0.6 * loss_fn(out_wave, clean)
+                + 0.2 * si_sdr_loss(out_wave, clean)
+                + 0.2 * multi_res_stft_loss(out_wave, clean)
+            )
             val_loss += loss.item()
 
             est, ref = out_wave.cpu(), clean.cpu()
@@ -52,7 +69,7 @@ def evaluate(model, val_loader, device, loss_fn, pesq_metric, stoi_metric, sisdr
     avg_stoi = sum(stoi_scores) / len(stoi_scores) if stoi_scores else 0.0
     avg_sisdr = sum(sisdr_scores) / len(sisdr_scores) if sisdr_scores else 0.0
 
-    # reset metrics
+    # Reset metrics
     pesq_metric.reset()
     stoi_metric.reset()
     sisdr_metric.reset()
@@ -79,9 +96,7 @@ def train_model():
     model = TFDenseUNet().to(device)
     loss_fn = torch.nn.MSELoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3, betas=(0.9, 0.99))
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, mode='max', factor=0.5, patience=3
-    )
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='max', factor=0.5, patience=3)
 
     # Metrics
     pesq_metric = PerceptualEvaluationSpeechQuality(fs=16000, mode="wb")
@@ -94,6 +109,10 @@ def train_model():
     best_val_pesq = -1.0
     no_improve_count = 0
 
+    # For plotting
+    train_losses, val_losses = [], []
+    pesq_scores, stoi_scores, sisdr_scores = [], [], []
+
     for epoch in range(num_epochs):
         # ---------------- TRAIN ----------------
         model.train()
@@ -103,14 +122,18 @@ def train_model():
         for clean, noisy, length in loop:
             clean = clean.to(device).squeeze(1)
             noisy = noisy.to(device).squeeze(1)
-
             optimizer.zero_grad()
+
             out_wave = model(noisy)
-            # Combined loss (non-negative)
-            loss = loss_fn(out_wave, clean) + 0.1 * si_sdr_loss(out_wave, clean)
+
+            # Combined loss (MSE + SI-SDR + Multi-Res STFT)
+            loss = (
+                0.6 * loss_fn(out_wave, clean)
+                + 0.2 * si_sdr_loss(out_wave, clean)
+                + 0.2 * multi_res_stft_loss(out_wave, clean)
+            )
             loss.backward()
             optimizer.step()
-
             epoch_loss += loss.item()
             loop.set_postfix(loss=loss.item())
 
@@ -127,6 +150,13 @@ def train_model():
               f"PESQ: {val_pesq:.4f} | "
               f"STOI: {val_stoi:.4f} | "
               f"SI-SDR: {val_sisdr:.4f} dB")
+
+        # Record values
+        train_losses.append(avg_train_loss)
+        val_losses.append(val_loss)
+        pesq_scores.append(val_pesq)
+        stoi_scores.append(val_stoi)
+        sisdr_scores.append(val_sisdr)
 
         # ---------------- EARLY STOPPING ----------------
         if val_pesq > best_val_pesq:
@@ -148,6 +178,45 @@ def train_model():
             print(f"🔽 LR reduced from {old_lr} to {new_lr}")
 
     print(f"\nTraining completed. Best PESQ: {best_val_pesq:.4f}")
+
+    # ------------------- PLOTTING LEARNING CURVES -------------------
+    epochs = range(1, len(train_losses) + 1)
+
+    plt.figure(figsize=(14, 8))
+
+    plt.subplot(2, 2, 1)
+    plt.plot(epochs, train_losses, label="Train Loss", marker='o')
+    plt.plot(epochs, val_losses, label="Val Loss", marker='o')
+    plt.title("Loss Curves")
+    plt.xlabel("Epoch")
+    plt.ylabel("Loss")
+    plt.legend()
+    plt.grid(True)
+
+    plt.subplot(2, 2, 2)
+    plt.plot(epochs, pesq_scores, label="PESQ", marker='o', color='purple')
+    plt.title("PESQ over Epochs")
+    plt.xlabel("Epoch")
+    plt.ylabel("PESQ")
+    plt.grid(True)
+
+    plt.subplot(2, 2, 3)
+    plt.plot(epochs, stoi_scores, label="STOI", marker='o', color='green')
+    plt.title("STOI over Epochs")
+    plt.xlabel("Epoch")
+    plt.ylabel("STOI")
+    plt.grid(True)
+
+    plt.subplot(2, 2, 4)
+    plt.plot(epochs, sisdr_scores, label="SI-SDR", marker='o', color='orange')
+    plt.title("SI-SDR over Epochs")
+    plt.xlabel("Epoch")
+    plt.ylabel("SI-SDR (dB)")
+    plt.grid(True)
+
+    plt.tight_layout()
+    plt.savefig("learning_curves.png", dpi=300)
+    plt.show()
 
 
 if __name__ == "__main__":
